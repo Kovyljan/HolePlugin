@@ -1,6 +1,7 @@
 ﻿using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
 using Autodesk.Revit.DB.Mechanical;
+using Autodesk.Revit.DB.Plumbing;
 using Autodesk.Revit.DB.Structure;
 using Autodesk.Revit.UI;
 using System;
@@ -43,7 +44,12 @@ namespace HolePlugin
                 .OfType<Duct>()
                 .ToList();
 
-            View3D view3D = new FilteredElementCollector(ovkDoc)
+            List<Pipe> pipes = new FilteredElementCollector(ovkDoc)
+                .OfClass(typeof(Pipe))
+                .OfType<Pipe>()
+                .ToList();
+
+            View3D view3D = new FilteredElementCollector(arDoc)
                 .OfClass(typeof(View3D))
                 .OfType<View3D>()
                 .Where(x => !x.IsTemplate)
@@ -86,8 +92,38 @@ namespace HolePlugin
                     FamilyInstance hole = arDoc.Create.NewFamilyInstance(pointHole, familySymbol, wall, level, StructuralType.NonStructural);
                     Parameter width = hole.LookupParameter("ADSK_Отверстие_Ширина");
                     Parameter height = hole.LookupParameter("ADSK_Отверстие_Высота");
-                    width.Set(d.Diameter + 50);
-                    height.Set(d.Diameter + 50);
+                    Parameter markFromFloor = hole.get_Parameter(BuiltInParameter.INSTANCE_ELEVATION_PARAM);
+                    width.Set(d.Diameter);
+                    height.Set(d.Diameter);
+                    double mff = markFromFloor.AsDouble()-d.Diameter/2;                    
+                    markFromFloor.Set(mff);
+                }
+            }
+            foreach (Pipe p in pipes)
+            {
+                Line line = (p.Location as LocationCurve).Curve as Line;
+                XYZ point = line.GetEndPoint(0);
+                XYZ direction = line.Direction;
+                List<ReferenceWithContext> intersections = referenceIntersector.Find(point, direction)
+                    .Where(x => x.Proximity <= line.Length)
+                    .Distinct(new ReferenceWithContextElementEqualityComparer())
+                    .ToList();
+                foreach (ReferenceWithContext refer in intersections)
+                {
+                    double proximity = refer.Proximity;
+                    Reference reference = refer.GetReference();
+                    Wall wall = arDoc.GetElement(reference.ElementId) as Wall;
+                    Level level = arDoc.GetElement(wall.LevelId) as Level;
+                    XYZ pointHole = point + (direction * proximity);
+
+                    FamilyInstance hole = arDoc.Create.NewFamilyInstance(pointHole, familySymbol, wall, level, StructuralType.NonStructural);
+                    Parameter width = hole.LookupParameter("ADSK_Отверстие_Ширина");
+                    Parameter height = hole.LookupParameter("ADSK_Отверстие_Высота");
+                    Parameter markFromFloor = hole.get_Parameter(BuiltInParameter.INSTANCE_ELEVATION_PARAM);
+                    width.Set(p.Diameter);
+                    height.Set(p.Diameter);
+                    double mff = markFromFloor.AsDouble() - p.Diameter / 2;
+                    markFromFloor.Set(mff);
                 }
             }
             transaction.Commit();
